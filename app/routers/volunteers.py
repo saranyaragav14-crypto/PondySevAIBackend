@@ -14,12 +14,9 @@ def _gen_ref() -> str:
 
 @router.post("/register", response_model=VolunteerOut, status_code=201)
 def register_volunteer(body: VolunteerCreate, background_tasks: BackgroundTasks):
-    """
-    Register a new volunteer. Triggers AI assessment in the background.
-    """
+    """Register a new volunteer. Triggers AI assessment in the background."""
     db = get_supabase()
 
-    # Check for duplicate phone
     existing = db.table("volunteers").select("id").eq("phone", body.phone).execute()
     if existing.data:
         raise HTTPException(409, "A volunteer with this phone number already exists")
@@ -55,10 +52,7 @@ def register_volunteer(body: VolunteerCreate, background_tasks: BackgroundTasks)
     if not result.data:
         raise HTTPException(500, "Failed to save volunteer record")
 
-    # Send confirmation SMS (non-blocking)
     background_tasks.add_task(send_sms, body.phone, "registration_success", "en", ref=ref)
-
-    # Trigger AI assessment in background
     background_tasks.add_task(_run_ai_assessment, volunteer_id)
 
     return VolunteerOut(
@@ -70,6 +64,7 @@ def register_volunteer(body: VolunteerCreate, background_tasks: BackgroundTasks)
         reference_number=ref,
     )
 
+
 def _run_ai_assessment(volunteer_id: str):
     """Background task — run MiniLM + Claude assessment."""
     try:
@@ -79,6 +74,7 @@ def _run_ai_assessment(volunteer_id: str):
         import traceback
         print(f"[AI assessment error] volunteer {volunteer_id}: {e}")
         traceback.print_exc()
+
 
 @router.get("/me", response_model=VolunteerOut)
 def get_my_profile(user: dict = Depends(get_current_user)):
@@ -90,6 +86,7 @@ def get_my_profile(user: dict = Depends(get_current_user)):
     v = result.data[0]
     return VolunteerOut(**v)
 
+
 @router.get("/{volunteer_id}", response_model=VolunteerOut)
 def get_volunteer(volunteer_id: str, user: dict = Depends(require_role("nodal_officer", "admin"))):
     """Get volunteer by ID (nodal officer / admin only)."""
@@ -98,6 +95,7 @@ def get_volunteer(volunteer_id: str, user: dict = Depends(require_role("nodal_of
     if not result.data:
         raise HTTPException(404, "Volunteer not found")
     return VolunteerOut(**result.data[0])
+
 
 @router.get("/")
 def list_volunteers(
@@ -118,6 +116,7 @@ def list_volunteers(
     result = query.range(offset, offset + limit - 1).order("created_at", desc=True).execute()
     return {"volunteers": result.data, "total": len(result.data)}
 
+
 @router.patch("/{volunteer_id}")
 def update_volunteer(
     volunteer_id: str,
@@ -134,7 +133,6 @@ def update_volunteer(
     if not result.data:
         raise HTTPException(404, "Volunteer not found")
 
-    # Send SMS notification on assignment
     if body.status == "assigned" and body.assigned_role:
         v = result.data[0]
         send_sms(v["phone"], "application_assigned", "en",
@@ -142,9 +140,13 @@ def update_volunteer(
 
     return {"updated": True, "volunteer": result.data[0]}
 
+
 @router.post("/{volunteer_id}/reassess")
-def trigger_reassessment(volunteer_id: str, background_tasks: BackgroundTasks,
-                         user: dict = Depends(require_role("nodal_officer", "admin"))):
+def trigger_reassessment(
+    volunteer_id: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_role("nodal_officer", "admin")),
+):
     """Manually trigger AI reassessment for a volunteer."""
     background_tasks.add_task(_run_ai_assessment, volunteer_id)
     return {"message": "AI reassessment queued"}
