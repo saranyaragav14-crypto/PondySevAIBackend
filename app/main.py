@@ -5,7 +5,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
-from app.routers import auth, volunteers, roles, deployments, certificates, nodal_officer, admin
+from app.routers import auth, volunteers, roles, deployments, certificates, nodal_officer, admin, rewards
 
 settings = get_settings()
 limiter = Limiter(key_func=get_remote_address)
@@ -36,6 +36,7 @@ app.include_router(deployments.router)
 app.include_router(certificates.router)
 app.include_router(nodal_officer.router)
 app.include_router(admin.router)
+app.include_router(rewards.router)
 
 @app.get("/")
 def root():
