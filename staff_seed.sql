@@ -5,8 +5,8 @@
 
 INSERT INTO staff (name, email, password_hash, role, commune)
 VALUES
-  ('Nodal Officer', 'officer@puducherry.gov.in', 'REPLACE_WITH_OFFICER_BCRYPT_HASH', 'nodal_officer', 'Puducherry'),
-  ('Admin', 'admin@pondysevai.in', 'REPLACE_WITH_ADMIN_BCRYPT_HASH', 'admin', 'Puducherry')
+  ('Nodal Officer', 'officer@puducherry.gov.in', 'Officer@123', 'nodal_officer', 'Puducherry'),
+  ('Admin', 'admin@pondysevai.in', 'Admin@123', 'admin', 'Puducherry')
 ON CONFLICT (email) DO UPDATE SET
   name = EXCLUDED.name,
   password_hash = EXCLUDED.password_hash,
