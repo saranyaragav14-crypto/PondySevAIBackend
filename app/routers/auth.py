@@ -44,7 +44,8 @@ def staff_login(body: NodalOfficerLogin):
     """Nodal officer email/password login."""
     from app.database import get_supabase
     db = get_supabase()
-    result = db.table("staff").select("*").eq("email", body.email).eq("role", "nodal_officer").execute()
+    email = body.email.strip().lower()
+    result = db.table("staff").select("*").eq("email", email).eq("role", "nodal_officer").execute()
     if not result.data:
         raise HTTPException(401, "Invalid credentials")
     staff = result.data[0]
@@ -58,7 +59,8 @@ def admin_login(body: AdminLogin):
     """Admin email/password login."""
     from app.database import get_supabase
     db = get_supabase()
-    result = db.table("staff").select("*").eq("email", body.email).eq("role", "admin").execute()
+    email = body.email.strip().lower()
+    result = db.table("staff").select("*").eq("email", email).eq("role", "admin").execute()
     if not result.data:
         raise HTTPException(401, "Invalid credentials")
     staff = result.data[0]
