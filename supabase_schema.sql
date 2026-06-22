@@ -171,12 +171,12 @@ ALTER TABLE volunteers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE deployments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
 ALTER TABLE certificates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE staff ENABLE ROW LEVEL SECURITY;
 
--- Allow service role full access (used by FastAPI backend)
-CREATE POLICY "service_role_all" ON volunteers FOR ALL USING (true);
-CREATE POLICY "service_role_all" ON deployments FOR ALL USING (true);
-CREATE POLICY "service_role_all" ON feedback FOR ALL USING (true);
-CREATE POLICY "service_role_all" ON certificates FOR ALL USING (true);
+-- The FastAPI backend uses the Supabase service-role key, which bypasses RLS.
+-- Do not
+-- add permissive policies here: `USING (true)` would expose these tables to
+-- every database API role, including the anonymous key.
 
 -- Auto-update updated_at
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -184,6 +184,7 @@ RETURNS TRIGGER AS $$
 BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS volunteers_updated_at ON volunteers;
 CREATE TRIGGER volunteers_updated_at
     BEFORE UPDATE ON volunteers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
@@ -196,3 +197,13 @@ CREATE INDEX IF NOT EXISTS idx_volunteers_status ON volunteers(status);
 CREATE INDEX IF NOT EXISTS idx_volunteers_commune ON volunteers(commune);
 CREATE INDEX IF NOT EXISTS idx_deployments_volunteer ON deployments(volunteer_id);
 CREATE INDEX IF NOT EXISTS idx_certificates_volunteer ON certificates(volunteer_id);
+
+-- Incremental compatibility columns.  `IF NOT EXISTS` makes this script safe
+-- to use for both a fresh project and an already-created database.
+ALTER TABLE volunteers
+    ADD COLUMN IF NOT EXISTS assigned_role_id TEXT REFERENCES roles(id);
+ALTER TABLE deployments
+    ADD COLUMN IF NOT EXISTS assigned_by UUID REFERENCES staff(id);
+
+CREATE INDEX IF NOT EXISTS idx_volunteers_assigned_role_id
+    ON volunteers(assigned_role_id);

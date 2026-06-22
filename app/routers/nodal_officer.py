@@ -26,7 +26,7 @@ def get_applicants(
     """Get all applicants with AI scores, filtered by status/commune/dept."""
     db = get_supabase()
     query = db.table("volunteers").select(
-        "id,full_name,phone,commune,status,ai_score,ai_assessment,ai_top_matches,assigned_role,assigned_dept,tier,latest_feedback,created_at,departments"
+        "id,full_name,phone,commune,status,ai_score,ai_assessment,ai_top_matches,assigned_role,assigned_dept,tier,latest_feedback,created_at,departments,availability"
     )
     if status:
         query = query.eq("status", status)
@@ -49,6 +49,7 @@ def assign_volunteer(
     result = db.table("volunteers").update({
         "status": "assigned",
         "assigned_role": body.role,
+        "assigned_role_id": body.role_id,
         "assigned_dept": body.dept,
         "assigned_by": user["sub"],
     }).eq("id", volunteer_id).execute()

@@ -46,6 +46,11 @@ class VolunteerOut(BaseModel):
     tier: Optional[str] = None
     ai_assessment: Optional[str] = None
     ai_score: Optional[float] = None
+    ai_top_matches: Optional[str] = None
+    assigned_role: Optional[str] = None
+    assigned_dept: Optional[str] = None
+    availability: list[str] = []
+    departments: list[str] = []
 
 class VolunteerUpdate(BaseModel):
     status: Optional[str] = None

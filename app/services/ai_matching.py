@@ -5,8 +5,6 @@ Layer 2: Claude API (natural language profile assessment)
 """
 import json
 import traceback
-import numpy as np
-from typing import Optional
 from anthropic import Anthropic
 from app.config import get_settings
 from app.database import get_supabase
@@ -26,6 +24,22 @@ def _get_model():
         print("[AI matching] Model loaded successfully.")
     return _model
 
+def _fallback_role_matches(volunteer: dict, roles: list[dict]) -> list[dict]:
+    preferred = set(volunteer.get("departments") or [])
+    scored = []
+    for role in roles:
+      if volunteer.get("mobility_impairment") and role.get("demand") == "high":
+          continue
+      score = 0.72 if role.get("dept_name") in preferred or role.get("dept_id") in preferred else 0.52
+      scored.append({
+          "role_id": role["id"],
+          "role_name": role["name"],
+          "dept": role.get("dept_name", ""),
+          "demand": role.get("demand", ""),
+          "score": score,
+      })
+    return sorted(scored, key=lambda x: x["score"], reverse=True)[:5]
+
 def _build_profile_text(volunteer: dict) -> str:
     """Flatten volunteer profile into a single text for embedding."""
     parts = [
@@ -39,9 +53,6 @@ def _build_profile_text(volunteer: dict) -> str:
         f"Mobility impairment: {'yes' if volunteer.get('mobility_impairment') else 'no'}",
     ]
     return ". ".join(p for p in parts if p.split(": ", 1)[1])
-
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
 
 def compute_role_matches(volunteer: dict) -> list[dict]:
     """
@@ -60,7 +71,13 @@ def compute_role_matches(volunteer: dict) -> list[dict]:
             print("[AI matching] No roles found — skipping matching.")
             return []
 
-        model = _get_model()
+        try:
+            model = _get_model()
+            import numpy as np
+        except Exception as e:
+            print(f"[AI matching] SentenceTransformer unavailable, using fallback matcher: {e}")
+            return _fallback_role_matches(volunteer, roles)
+
         profile_text = _build_profile_text(volunteer)
         print(f"[AI matching] Profile text: {profile_text}")
         profile_vec = model.encode(profile_text, normalize_embeddings=True)
@@ -73,7 +90,7 @@ def compute_role_matches(volunteer: dict) -> list[dict]:
 
             role_text = f"{role['name']}. Required qualifications: {role.get('qualifications', '')}. Department: {role.get('dept_name', '')}"
             role_vec = model.encode(role_text, normalize_embeddings=True)
-            score = _cosine_similarity(profile_vec, role_vec)
+            score = float(np.dot(profile_vec, role_vec) / (np.linalg.norm(profile_vec) * np.linalg.norm(role_vec) + 1e-9))
 
             if score >= 0.45:
                 scored.append({
