@@ -22,6 +22,10 @@ class CheckInOut(BaseModel):
     deployment_id: str
     action: str  # "checkin" | "checkout"
 
+class QRAttendance(BaseModel):
+    token: str
+    action: str  # "checkin" | "checkout"
+
 class FeedbackCreate(BaseModel):
     volunteer_id: str
     deployment_id: str

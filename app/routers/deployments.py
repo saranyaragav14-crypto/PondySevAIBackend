@@ -1,11 +1,20 @@
 import uuid
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from app.schemas.role import DeploymentCreate, CheckInOut, FeedbackCreate
+from app.schemas.role import DeploymentCreate, CheckInOut, FeedbackCreate, QRAttendance
 from app.database import get_supabase
 from app.routers.auth import get_current_user, require_role
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
+
+def _add_supervisor(db, deployment: dict) -> dict:
+    """Attach contact details only for a volunteer already at the site."""
+    deployment["supervisor"] = None
+    if deployment.get("status") not in ("active", "completed") or not deployment.get("assigned_by"):
+        return deployment
+    staff = db.table("staff").select("id,name,phone,email").eq("id", deployment["assigned_by"]).execute()
+    deployment["supervisor"] = staff.data[0] if staff.data else None
+    return deployment
 
 @router.post("/", status_code=201)
 def create_deployment(
@@ -33,7 +42,60 @@ def my_deployments(user: dict = Depends(get_current_user)):
     result = db.table("deployments").select("*, roles(name, dept_name)").eq(
         "volunteer_id", user["sub"]
     ).order("scheduled_date", desc=True).execute()
-    return {"deployments": result.data}
+    deployments = result.data
+
+    for deployment in deployments:
+        _add_supervisor(db, deployment)
+
+    return {"deployments": deployments}
+
+@router.post("/{deployment_id}/qr-token")
+def create_qr_token(deployment_id: str, user: dict = Depends(get_current_user)):
+    """Create a short-lived QR ticket for the signed-in volunteer's own shift."""
+    db = get_supabase()
+    result = db.table("deployments").select("id,volunteer_id,status").eq("id", deployment_id).eq(
+        "volunteer_id", user["sub"]
+    ).execute()
+    if not result.data or result.data[0]["status"] not in ("scheduled", "active"):
+        raise HTTPException(404, "Active deployment not found")
+    token = auth_service.create_access_token({
+        "sub": user["sub"], "deployment_id": deployment_id, "purpose": "qr_attendance"
+    }, expires_minutes=15)
+    return {"token": token, "expires_in_minutes": 15}
+
+def _qr_deployment(db, token: str) -> dict:
+    payload = auth_service.decode_token(token)
+    if not payload or payload.get("purpose") != "qr_attendance":
+        raise HTTPException(401, "Invalid or expired QR code")
+    result = db.table("deployments").select("*, roles(name, dept_name)").eq(
+        "id", payload.get("deployment_id")
+    ).eq("volunteer_id", payload.get("sub")).execute()
+    if not result.data:
+        raise HTTPException(404, "Deployment not found")
+    return _add_supervisor(db, result.data[0])
+
+@router.get("/qr/{token}")
+def get_qr_deployment(token: str):
+    """Resolve a short-lived QR ticket for the phone scan page."""
+    return {"deployment": _qr_deployment(get_supabase(), token)}
+
+@router.post("/qr-attendance")
+def qr_attendance(body: QRAttendance):
+    """Record QR arrival/departure without requiring a browser session on the phone."""
+    if body.action not in ("checkin", "checkout"):
+        raise HTTPException(400, "action must be 'checkin' or 'checkout'")
+    db = get_supabase()
+    deployment = _qr_deployment(db, body.token)
+    if body.action == "checkin" and deployment["status"] != "scheduled":
+        raise HTTPException(409, "This deployment cannot be checked in")
+    if body.action == "checkout" and deployment["status"] != "active":
+        raise HTTPException(409, "Check in before checking out")
+    now = datetime.utcnow().isoformat()
+    update = {"checked_in_at": now, "status": "active"} if body.action == "checkin" else {
+        "checked_out_at": now, "status": "completed"
+    }
+    updated = db.table("deployments").update(update).eq("id", deployment["id"]).execute()
+    return {"action": body.action, "timestamp": now, "deployment": _add_supervisor(db, updated.data[0])}
 
 @router.post("/checkin")
 def qr_checkin(body: CheckInOut, user: dict = Depends(get_current_user)):
@@ -41,9 +103,17 @@ def qr_checkin(body: CheckInOut, user: dict = Depends(get_current_user)):
     if body.action not in ("checkin", "checkout"):
         raise HTTPException(400, "action must be 'checkin' or 'checkout'")
     db = get_supabase()
-    dep = db.table("deployments").select("*").eq("id", body.deployment_id).execute()
+    dep = db.table("deployments").select("*").eq("id", body.deployment_id).eq(
+        "volunteer_id", user["sub"]
+    ).execute()
     if not dep.data:
-        raise HTTPException(404, "Deployment not found")
+        raise HTTPException(404, "Deployment not found for this volunteer")
+
+    deployment = dep.data[0]
+    if body.action == "checkin" and deployment["status"] != "scheduled":
+        raise HTTPException(409, "This deployment cannot be checked in")
+    if body.action == "checkout" and deployment["status"] != "active":
+        raise HTTPException(409, "Check in before checking out")
 
     update = {}
     if body.action == "checkin":
