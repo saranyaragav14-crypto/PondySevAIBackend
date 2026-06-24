@@ -16,7 +16,10 @@ def send_otp(body: OTPRequest):
     digits = re.sub(r'\D', '', body.phone)
     if len(digits) != 10:
         raise HTTPException(400, "Phone must be 10 digits")
-    result = auth_service.send_otp(digits)
+    try:
+        result = auth_service.send_otp(digits)
+    except auth_service.OtpServiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     return result
 
 @router.post("/otp/verify", response_model=TokenOut)
@@ -24,7 +27,11 @@ def verify_otp(body: OTPVerify):
     """Verify OTP and issue JWT for volunteer."""
     import re
     digits = re.sub(r'\D', '', body.phone)
-    if not auth_service.verify_otp(digits, body.otp):
+    try:
+        valid = auth_service.verify_otp(digits, body.otp)
+    except auth_service.OtpServiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if not valid:
         raise HTTPException(401, "Invalid or expired OTP")
 
     volunteer = auth_service.get_volunteer_by_phone(digits)

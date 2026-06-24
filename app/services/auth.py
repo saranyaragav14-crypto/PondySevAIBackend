@@ -2,22 +2,50 @@
 Auth service — OTP generation and verification.
 JWT issued by this backend after verification.
 """
-import random
-import string
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
 from jose import jwt, JWTError
+from redis import Redis
+from redis.exceptions import RedisError
 from app.config import get_settings
 from app.database import get_supabase
 
 settings = get_settings()
 
-# In-memory OTP store (replace with Redis in prod)
-_otp_store: dict[str, str] = {}
+_otp_store: dict[str, tuple[str, datetime]] = {}
+_redis_client: Redis | None = None
+
+
+class OtpServiceUnavailable(RuntimeError):
+    """Raised when production OTP storage or delivery is unavailable."""
+
+
+def _is_production() -> bool:
+    return settings.app_env.lower() == "production"
+
+
+def _get_redis() -> Redis | None:
+    global _redis_client
+    if not settings.redis_url:
+        return None
+    if _redis_client is None:
+        _redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        _redis_client.ping()
+    except RedisError as exc:
+        if _is_production():
+            raise OtpServiceUnavailable("OTP storage is unavailable") from exc
+        return None
+    return _redis_client
+
+
+def _otp_key(phone: str) -> str:
+    return f"pondysevai:otp:{phone}"
 
 def _generate_otp() -> str:
-    return ''.join(random.choices(string.digits, k=6))
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 def create_access_token(data: dict, expires_minutes: int | None = None) -> str:
     expire = datetime.utcnow() + timedelta(
@@ -41,7 +69,18 @@ def send_otp(phone: str) -> dict:
     Always returns dev_otp so testing works even without Twilio.
     """
     otp = _generate_otp()
-    _otp_store[phone] = otp
+    redis = _get_redis()
+    if redis:
+        try:
+            redis.set(_otp_key(phone), otp, ex=settings.otp_ttl_seconds)
+        except RedisError as exc:
+            if _is_production():
+                raise OtpServiceUnavailable("OTP storage is unavailable") from exc
+            _otp_store[phone] = (otp, datetime.utcnow() + timedelta(seconds=settings.otp_ttl_seconds))
+    elif _is_production():
+        raise OtpServiceUnavailable("OTP storage is not configured")
+    else:
+        _otp_store[phone] = (otp, datetime.utcnow() + timedelta(seconds=settings.otp_ttl_seconds))
 
     # Try to send via Twilio if configured
     if settings.twilio_account_sid:
@@ -51,7 +90,10 @@ def send_otp(phone: str) -> dict:
         except Exception as e:
             print(f"[OTP] Twilio failed: {e} — returning dev_otp")
 
-    # Always return dev_otp as fallback so login works without SMS
+    if _is_production():
+        raise OtpServiceUnavailable("SMS delivery is not configured")
+
+    # Demo OTP is intentionally limited to non-production environments.
     return {"sent": True, "method": "dev", "dev_otp": otp}
 
 def _send_twilio_sms(phone: str, otp: str):
@@ -64,11 +106,32 @@ def _send_twilio_sms(phone: str, otp: str):
     )
 
 def verify_otp(phone: str, otp: str) -> bool:
-    stored = _otp_store.get(phone)
-    if stored and stored == otp:
+    redis = _get_redis()
+    if redis:
+        try:
+            stored = redis.get(_otp_key(phone))
+            if stored != otp:
+                return False
+            redis.delete(_otp_key(phone))
+            return True
+        except RedisError as exc:
+            if _is_production():
+                raise OtpServiceUnavailable("OTP storage is unavailable") from exc
+            return False
+    if _is_production():
+        raise OtpServiceUnavailable("OTP storage is not configured")
+
+    record = _otp_store.get(phone)
+    if not record:
+        return False
+    stored, expires_at = record
+    if expires_at <= datetime.utcnow():
         del _otp_store[phone]
-        return True
-    return False
+        return False
+    if stored != otp:
+        return False
+    del _otp_store[phone]
+    return True
 
 def get_volunteer_by_phone(phone: str) -> Optional[dict]:
     db = get_supabase()

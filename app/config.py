@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 10080
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str = ""
+    otp_ttl_seconds: int = 600
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from_number: str = ""
