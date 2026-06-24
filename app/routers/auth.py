@@ -34,7 +34,10 @@ def verify_otp(body: OTPVerify):
     if not valid:
         raise HTTPException(401, "Invalid or expired OTP")
 
-    volunteer = auth_service.get_volunteer_by_phone(digits)
+    try:
+        volunteer = auth_service.get_volunteer_by_phone(digits)
+    except auth_service.VolunteerLookupUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     if not volunteer:
         raise HTTPException(404, "No registered volunteer found for this phone number")
 

@@ -22,6 +22,10 @@ class OtpServiceUnavailable(RuntimeError):
     """Raised when production OTP storage or delivery is unavailable."""
 
 
+class VolunteerLookupUnavailable(RuntimeError):
+    """Raised when the volunteer database cannot be queried during sign-in."""
+
+
 def _is_production() -> bool:
     return settings.app_env.lower() == "production"
 
@@ -134,9 +138,12 @@ def verify_otp(phone: str, otp: str) -> bool:
     return True
 
 def get_volunteer_by_phone(phone: str) -> Optional[dict]:
-    db = get_supabase()
-    result = db.table("volunteers").select("*").eq("phone", phone).execute()
-    return result.data[0] if result.data else None
+    try:
+        db = get_supabase()
+        result = db.table("volunteers").select("*").eq("phone", phone).execute()
+        return result.data[0] if result.data else None
+    except Exception as exc:
+        raise VolunteerLookupUnavailable("Volunteer database is unavailable") from exc
 
 def get_staff_by_email(email: str, role: str) -> Optional[dict]:
     db = get_supabase()
