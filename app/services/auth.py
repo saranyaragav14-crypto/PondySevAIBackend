@@ -160,14 +160,24 @@ def get_fallback_volunteer(phone: str) -> dict:
     volunteer = fallback_data.get_by_phone(phone)
     if volunteer:
         return volunteer
-    return {
+
+    volunteer = {
         "id": f"fallback-volunteer-{phone}",
         "full_name": f"Volunteer {phone[-4:]}",
         "phone": phone,
         "commune": "Puducherry",
         "status": "registered",
         "reference_number": f"PSA-{phone[-6:]}",
+        "tier": None,
+        "ai_assessment": None,
+        "ai_score": None,
+        "ai_top_matches": None,
+        "assigned_role": None,
+        "assigned_dept": None,
+        "availability": [],
+        "departments": [],
     }
+    return fallback_data.add_volunteer(volunteer)
 
 def get_volunteer_by_phone(phone: str) -> Optional[dict]:
     try:

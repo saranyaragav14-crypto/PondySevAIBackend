@@ -6,6 +6,7 @@ from app.schemas.volunteer import VolunteerCreate, VolunteerOut, VolunteerUpdate
 from app.database import get_supabase
 from app.services.notifications import send_sms
 from app.services import fallback_data
+from app.services import auth as auth_service
 from app.routers.auth import get_current_user, require_role
 
 router = APIRouter(prefix="/volunteers", tags=["volunteers"])
@@ -89,10 +90,15 @@ def get_my_profile(user: dict = Depends(get_current_user)):
         db = get_supabase()
         result = db.table("volunteers").select("*").eq("id", user["sub"]).execute()
         v = result.data[0] if result.data else fallback_data.get_by_id(user["sub"])
+        if not v and user.get("phone"):
+            result = db.table("volunteers").select("*").eq("phone", user["phone"]).execute()
+            v = result.data[0] if result.data else fallback_data.get_by_phone(user["phone"])
     except Exception:
         v = fallback_data.get_by_id(user["sub"])
     if not v and user.get("phone"):
         v = fallback_data.get_by_phone(user["phone"])
+    if not v and user.get("phone"):
+        v = auth_service.get_fallback_volunteer(user["phone"])
     if not v:
         raise HTTPException(404, "Volunteer not found")
     return VolunteerOut(**v)
@@ -130,9 +136,17 @@ def list_volunteers(
         if commune:
             query = query.eq("commune", commune)
         result = query.range(offset, offset + limit - 1).order("created_at", desc=True).execute()
-        volunteers = result.data
+        volunteers = result.data or []
     except Exception:
-        volunteers = fallback_data.list_volunteers(status=status, commune=commune)
+        volunteers = []
+    fallback_volunteers = fallback_data.list_volunteers(status=status, commune=commune)
+    volunteers_by_key = {
+        volunteer.get("phone") or volunteer.get("id"): volunteer
+        for volunteer in volunteers
+    }
+    for volunteer in fallback_volunteers:
+        volunteers_by_key[volunteer.get("phone") or volunteer.get("id")] = volunteer
+    volunteers = list(volunteers_by_key.values())
     return {"volunteers": volunteers, "total": len(volunteers)}
 
 

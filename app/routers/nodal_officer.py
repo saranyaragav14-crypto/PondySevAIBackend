@@ -13,6 +13,7 @@ router = APIRouter(prefix="/nodal-officer", tags=["nodal-officer"])
 DEMO_APPLICANTS = [
     {
         "id": "demo-volunteer-001",
+        "reference_number": "PSA-DEMO01",
         "full_name": "Demo Volunteer",
         "phone": "9876543210",
         "commune": "Puducherry",
@@ -37,6 +38,19 @@ class AssignRequest(BaseModel):
     scheduled_date: Optional[str] = None
     shift: Optional[str] = None
     role_id: Optional[str] = None
+
+def _merge_volunteers(*groups: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for group in groups:
+        for volunteer in group:
+            key = volunteer.get("phone") or volunteer.get("id")
+            if not key:
+                continue
+            merged[key] = {**merged.get(key, {}), **volunteer}
+    return list(merged.values())
+
+def _demo_volunteer(volunteer_id: str) -> dict | None:
+    return next((volunteer for volunteer in DEMO_APPLICANTS if volunteer["id"] == volunteer_id), None)
 
 def _fallback_deployment(
     volunteer_id: str,
@@ -65,6 +79,7 @@ def get_applicants(
     user: dict = Depends(require_role("nodal_officer", "admin")),
 ):
     """Get all applicants with AI scores, filtered by status/commune/dept."""
+    supabase_applicants: list[dict] = []
     try:
         db = get_supabase()
         query = db.table("volunteers").select(
@@ -75,14 +90,28 @@ def get_applicants(
         if commune:
             query = query.eq("commune", commune)
         result = query.order("ai_score", desc=True).execute()
-        return {"applicants": result.data}
+        supabase_applicants = result.data or []
     except Exception:
-        applicants = fallback_data.list_volunteers(status=status, commune=commune) or DEMO_APPLICANTS
-        if status:
-            applicants = [a for a in applicants if a["status"] == status or (status == "pending_review" and a["status"] == "registered")]
-        if commune:
-            applicants = [a for a in applicants if a["commune"] == commune]
-        return {"applicants": applicants}
+        supabase_applicants = []
+
+    applicants = _merge_volunteers(
+        supabase_applicants,
+        fallback_data.list_volunteers(status=status, commune=commune),
+    ) or DEMO_APPLICANTS
+
+    if status:
+        applicants = [
+            a for a in applicants
+            if a["status"] == status or (status == "pending_review" and a["status"] == "registered")
+        ]
+    if commune:
+        applicants = [a for a in applicants if a["commune"] == commune]
+    if dept:
+        applicants = [
+            a for a in applicants
+            if a.get("assigned_dept") == dept or dept in (a.get("departments") or [])
+        ]
+    return {"applicants": applicants}
 
 @router.post("/assign/{volunteer_id}")
 def assign_volunteer(
@@ -107,7 +136,13 @@ def assign_volunteer(
         v = fallback_data.update_volunteer(volunteer_id, updates)
 
     if not v:
+        demo = _demo_volunteer(volunteer_id)
+        if demo:
+            v = fallback_data.add_volunteer({**demo, **updates})
+
+    if not v:
         raise HTTPException(404, "Volunteer not found")
+    fallback_data.add_volunteer({**v, **updates})
 
     # Create deployment record if shift details provided
     deployment_id = None
@@ -181,22 +216,34 @@ def export_csv(
     """Export volunteer list as CSV."""
     import csv, io
     from fastapi.responses import StreamingResponse
-    db = get_supabase()
-    query = db.table("volunteers").select(
-        "full_name,phone,commune,status,assigned_role,assigned_dept,tier,ai_score,created_at"
+    try:
+        db = get_supabase()
+        query = db.table("volunteers").select(
+            "full_name,phone,commune,status,assigned_role,assigned_dept,tier,ai_score,created_at"
+        )
+        if status:
+            query = query.eq("status", status)
+        if commune:
+            query = query.eq("commune", commune)
+        result = query.order("created_at", desc=True).execute()
+        volunteers = result.data or []
+    except Exception:
+        volunteers = []
+
+    volunteers = _merge_volunteers(
+        volunteers,
+        fallback_data.list_volunteers(status=status, commune=commune),
     )
-    if status:
-        query = query.eq("status", status)
-    if commune:
-        query = query.eq("commune", commune)
-    result = query.order("created_at", desc=True).execute()
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=[
         "full_name","phone","commune","status","assigned_role","assigned_dept","tier","ai_score","created_at"
     ])
     writer.writeheader()
-    writer.writerows(result.data)
+    writer.writerows([
+        {field: volunteer.get(field) for field in writer.fieldnames}
+        for volunteer in volunteers
+    ])
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -209,9 +256,10 @@ def get_stats(user: dict = Depends(require_role("nodal_officer", "admin"))):
     """Dashboard stats for the nodal officer."""
     try:
         db = get_supabase()
-        all_v = db.table("volunteers").select("status,commune,tier").execute().data
+        all_v = db.table("volunteers").select("id,phone,status,commune,tier").execute().data or []
     except Exception:
-        all_v = fallback_data.list_volunteers() or DEMO_APPLICANTS
+        all_v = []
+    all_v = _merge_volunteers(all_v, fallback_data.list_volunteers()) or DEMO_APPLICANTS
     stats = {
         "total": len(all_v),
         "by_status": {},
