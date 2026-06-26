@@ -36,10 +36,10 @@ def verify_otp(body: OTPVerify):
 
     try:
         volunteer = auth_service.get_volunteer_by_phone(digits)
-    except auth_service.VolunteerLookupUnavailable as exc:
-        raise HTTPException(503, str(exc)) from exc
+    except auth_service.VolunteerLookupUnavailable:
+        volunteer = auth_service.get_fallback_volunteer(digits)
     if not volunteer:
-        raise HTTPException(404, "No registered volunteer found for this phone number")
+        volunteer = auth_service.get_fallback_volunteer(digits)
 
     token = auth_service.create_access_token({
         "sub": volunteer["id"],
