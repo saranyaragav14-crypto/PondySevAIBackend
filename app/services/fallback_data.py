@@ -83,6 +83,22 @@ def add_deployment(record: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def get_deployment(deployment_id: str) -> dict[str, Any] | None:
+    return _read_store()["deployments"].get(deployment_id)
+
+
+def update_deployment(deployment_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+    with _lock:
+        data = _read_store()
+        deployment = data["deployments"].get(deployment_id)
+        if not deployment:
+            return None
+        deployment.update(updates)
+        data["deployments"][deployment_id] = deployment
+        _write_store(data)
+    return deployment
+
+
 def list_deployments(volunteer_id: str) -> list[dict[str, Any]]:
     deployments = [
         deployment for deployment in _read_store()["deployments"].values()
