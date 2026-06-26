@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from app.schemas.volunteer import VolunteerCreate, VolunteerOut, VolunteerUpdate
 from app.database import get_supabase
 from app.services.notifications import send_sms
+from app.services import fallback_data
 from app.routers.auth import get_current_user, require_role
 
 router = APIRouter(prefix="/volunteers", tags=["volunteers"])
@@ -57,7 +58,8 @@ def register_volunteer(body: VolunteerCreate, background_tasks: BackgroundTasks)
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"[registration fallback] Supabase unavailable; issued demo reference {ref}: {exc}")
+        fallback_data.add_volunteer(record)
+        print(f"[registration fallback] Supabase unavailable; saved fallback reference {ref}: {exc}")
 
     return VolunteerOut(
         id=volunteer_id,
@@ -83,22 +85,31 @@ def _run_ai_assessment(volunteer_id: str):
 @router.get("/me", response_model=VolunteerOut)
 def get_my_profile(user: dict = Depends(get_current_user)):
     """Get logged-in volunteer's profile."""
-    db = get_supabase()
-    result = db.table("volunteers").select("*").eq("id", user["sub"]).execute()
-    if not result.data:
+    try:
+        db = get_supabase()
+        result = db.table("volunteers").select("*").eq("id", user["sub"]).execute()
+        v = result.data[0] if result.data else fallback_data.get_by_id(user["sub"])
+    except Exception:
+        v = fallback_data.get_by_id(user["sub"])
+    if not v and user.get("phone"):
+        v = fallback_data.get_by_phone(user["phone"])
+    if not v:
         raise HTTPException(404, "Volunteer not found")
-    v = result.data[0]
     return VolunteerOut(**v)
 
 
 @router.get("/{volunteer_id}", response_model=VolunteerOut)
 def get_volunteer(volunteer_id: str, user: dict = Depends(require_role("nodal_officer", "admin"))):
     """Get volunteer by ID (nodal officer / admin only)."""
-    db = get_supabase()
-    result = db.table("volunteers").select("*").eq("id", volunteer_id).execute()
-    if not result.data:
+    try:
+        db = get_supabase()
+        result = db.table("volunteers").select("*").eq("id", volunteer_id).execute()
+        volunteer = result.data[0] if result.data else fallback_data.get_by_id(volunteer_id)
+    except Exception:
+        volunteer = fallback_data.get_by_id(volunteer_id)
+    if not volunteer:
         raise HTTPException(404, "Volunteer not found")
-    return VolunteerOut(**result.data[0])
+    return VolunteerOut(**volunteer)
 
 
 @router.get("/")
@@ -111,14 +122,18 @@ def list_volunteers(
     user: dict = Depends(require_role("nodal_officer", "admin")),
 ):
     """List all volunteers with optional filters (nodal officer / admin only)."""
-    db = get_supabase()
-    query = db.table("volunteers").select("*")
-    if status:
-        query = query.eq("status", status)
-    if commune:
-        query = query.eq("commune", commune)
-    result = query.range(offset, offset + limit - 1).order("created_at", desc=True).execute()
-    return {"volunteers": result.data, "total": len(result.data)}
+    try:
+        db = get_supabase()
+        query = db.table("volunteers").select("*")
+        if status:
+            query = query.eq("status", status)
+        if commune:
+            query = query.eq("commune", commune)
+        result = query.range(offset, offset + limit - 1).order("created_at", desc=True).execute()
+        volunteers = result.data
+    except Exception:
+        volunteers = fallback_data.list_volunteers(status=status, commune=commune)
+    return {"volunteers": volunteers, "total": len(volunteers)}
 
 
 @router.patch("/{volunteer_id}")
@@ -128,21 +143,24 @@ def update_volunteer(
     user: dict = Depends(require_role("nodal_officer", "admin")),
 ):
     """Update volunteer status / assignment (nodal officer / admin only)."""
-    db = get_supabase()
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(400, "No fields to update")
 
-    result = db.table("volunteers").update(updates).eq("id", volunteer_id).execute()
-    if not result.data:
+    try:
+        db = get_supabase()
+        result = db.table("volunteers").update(updates).eq("id", volunteer_id).execute()
+        volunteer = result.data[0] if result.data else fallback_data.update_volunteer(volunteer_id, updates)
+    except Exception:
+        volunteer = fallback_data.update_volunteer(volunteer_id, updates)
+    if not volunteer:
         raise HTTPException(404, "Volunteer not found")
 
     if body.status == "assigned" and body.assigned_role:
-        v = result.data[0]
-        send_sms(v["phone"], "application_assigned", "en",
+        send_sms(volunteer["phone"], "application_assigned", "en",
                  role=body.assigned_role, dept=body.assigned_dept or "Government of Puducherry")
 
-    return {"updated": True, "volunteer": result.data[0]}
+    return {"updated": True, "volunteer": volunteer}
 
 
 @router.post("/{volunteer_id}/reassess")

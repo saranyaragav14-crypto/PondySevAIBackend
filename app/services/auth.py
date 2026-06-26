@@ -12,6 +12,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 from app.config import get_settings
 from app.database import get_supabase
+from app.services import fallback_data
 
 settings = get_settings()
 
@@ -156,10 +157,16 @@ def verify_otp(phone: str, otp: str) -> bool:
     return True
 
 def get_fallback_volunteer(phone: str) -> dict:
+    volunteer = fallback_data.get_by_phone(phone)
+    if volunteer:
+        return volunteer
     return {
         "id": f"fallback-volunteer-{phone}",
         "full_name": f"Volunteer {phone[-4:]}",
         "phone": phone,
+        "commune": "Puducherry",
+        "status": "registered",
+        "reference_number": f"PSA-{phone[-6:]}",
     }
 
 def get_volunteer_by_phone(phone: str) -> Optional[dict]:

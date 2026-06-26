@@ -4,6 +4,7 @@ from typing import Optional
 from app.database import get_supabase
 from app.routers.auth import require_role
 from app.services.notifications import bulk_sms
+from app.services import fallback_data
 import uuid
 
 router = APIRouter(prefix="/nodal-officer", tags=["nodal-officer"])
@@ -56,7 +57,7 @@ def get_applicants(
         result = query.order("ai_score", desc=True).execute()
         return {"applicants": result.data}
     except Exception:
-        applicants = DEMO_APPLICANTS
+        applicants = fallback_data.list_volunteers(status=status, commune=commune) or DEMO_APPLICANTS
         if status:
             applicants = [a for a in applicants if a["status"] == status or (status == "pending_review" and a["status"] == "registered")]
         if commune:
@@ -71,37 +72,41 @@ def assign_volunteer(
     user: dict = Depends(require_role("nodal_officer", "admin")),
 ):
     """Assign a volunteer to a role, department, and optionally create a deployment."""
-    db = get_supabase()
-
-    # Update volunteer status
-    result = db.table("volunteers").update({
+    updates = {
         "status": "assigned",
         "assigned_role": body.role,
         "assigned_role_id": body.role_id,
         "assigned_dept": body.dept,
         "assigned_by": user["sub"],
-    }).eq("id", volunteer_id).execute()
+    }
+    try:
+        db = get_supabase()
+        result = db.table("volunteers").update(updates).eq("id", volunteer_id).execute()
+        v = result.data[0] if result.data else fallback_data.update_volunteer(volunteer_id, updates)
+    except Exception:
+        v = fallback_data.update_volunteer(volunteer_id, updates)
 
-    if not result.data:
+    if not v:
         raise HTTPException(404, "Volunteer not found")
-
-    v = result.data[0]
 
     # Create deployment record if shift details provided
     deployment_id = None
     if body.location and body.scheduled_date and body.shift:
-        dep_result = db.table("deployments").insert({
-            "id": str(uuid.uuid4()),
-            "volunteer_id": volunteer_id,
-            "role_id": body.role_id or "r01",
-            "location": body.location,
-            "scheduled_date": body.scheduled_date,
-            "shift": body.shift,
-            "status": "scheduled",
-            "assigned_by": user["sub"],
-        }).execute()
-        if dep_result.data:
-            deployment_id = dep_result.data[0]["id"]
+        try:
+            dep_result = db.table("deployments").insert({
+                "id": str(uuid.uuid4()),
+                "volunteer_id": volunteer_id,
+                "role_id": body.role_id or "r01",
+                "location": body.location,
+                "scheduled_date": body.scheduled_date,
+                "shift": body.shift,
+                "status": "scheduled",
+                "assigned_by": user["sub"],
+            }).execute()
+            if dep_result.data:
+                deployment_id = dep_result.data[0]["id"]
+        except Exception:
+            deployment_id = str(uuid.uuid4())
 
     background_tasks.add_task(
         bulk_sms, [v["phone"]], "application_assigned", "en",
@@ -116,12 +121,17 @@ def reject_volunteer(
     user: dict = Depends(require_role("nodal_officer", "admin")),
 ):
     """Reject a volunteer application."""
-    db = get_supabase()
-    result = db.table("volunteers").update({
+    updates = {
         "status": "rejected",
         "rejected_by": user["sub"],
-    }).eq("id", volunteer_id).execute()
-    if not result.data:
+    }
+    try:
+        db = get_supabase()
+        result = db.table("volunteers").update(updates).eq("id", volunteer_id).execute()
+        volunteer = result.data[0] if result.data else fallback_data.update_volunteer(volunteer_id, updates)
+    except Exception:
+        volunteer = fallback_data.update_volunteer(volunteer_id, updates)
+    if not volunteer:
         raise HTTPException(404, "Volunteer not found")
     return {"rejected": True}
 
@@ -179,7 +189,7 @@ def get_stats(user: dict = Depends(require_role("nodal_officer", "admin"))):
         db = get_supabase()
         all_v = db.table("volunteers").select("status,commune,tier").execute().data
     except Exception:
-        all_v = DEMO_APPLICANTS
+        all_v = fallback_data.list_volunteers() or DEMO_APPLICANTS
     stats = {
         "total": len(all_v),
         "by_status": {},
