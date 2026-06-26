@@ -56,7 +56,11 @@ def staff_login(body: NodalOfficerLogin):
     try:
         staff = auth_service.get_staff_by_email(email, "nodal_officer")
     except auth_service.StaffLookupUnavailable as exc:
-        raise HTTPException(503, str(exc)) from exc
+        staff = auth_service.get_fallback_staff(email, "nodal_officer", body.password)
+        if not staff:
+            raise HTTPException(503, str(exc)) from exc
+        token = auth_service.create_access_token({"sub": staff["id"], "role": "nodal_officer", "name": staff["name"]})
+        return TokenOut(access_token=token, role="nodal_officer", name=staff["name"])
     if not staff:
         raise HTTPException(401, "Invalid credentials")
     if not bcrypt.checkpw(body.password.encode(), staff["password_hash"].encode()):
@@ -71,7 +75,11 @@ def admin_login(body: AdminLogin):
     try:
         staff = auth_service.get_staff_by_email(email, "admin")
     except auth_service.StaffLookupUnavailable as exc:
-        raise HTTPException(503, str(exc)) from exc
+        staff = auth_service.get_fallback_staff(email, "admin", body.password)
+        if not staff:
+            raise HTTPException(503, str(exc)) from exc
+        token = auth_service.create_access_token({"sub": staff["id"], "role": "admin", "name": staff["name"]})
+        return TokenOut(access_token=token, role="admin", name=staff["name"])
     if not staff:
         raise HTTPException(401, "Invalid credentials")
     if not bcrypt.checkpw(body.password.encode(), staff["password_hash"].encode()):
