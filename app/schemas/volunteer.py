@@ -20,6 +20,13 @@ class VolunteerCreate(BaseModel):
     motivation: Optional[str] = None
     role_type: Optional[str] = None
 
+    @field_validator("email", "address", "gender", "experience", "motivation", "role_type", mode="before")
+    @classmethod
+    def blank_strings_are_none(cls, v):
+        if v == "":
+            return None
+        return v
+
     @field_validator("phone")
     @classmethod
     def phone_must_be_10_digits(cls, v):
