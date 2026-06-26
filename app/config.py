@@ -4,6 +4,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
+    supabase_service_role_key: str = ""
     supabase_anon_key: str = ""
     anthropic_api_key: str = ""
     jwt_secret: str = "dev-secret-change-in-production"
@@ -16,6 +17,10 @@ class Settings(BaseSettings):
     twilio_from_number: str = ""
     app_env: str = "development"
     frontend_url: str = "http://localhost:3000"
+
+    @property
+    def supabase_server_key(self) -> str:
+        return self.supabase_service_key or self.supabase_service_role_key
 
     class Config:
         env_file = ".env"

@@ -6,6 +6,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
+import httpx
 from jose import jwt, JWTError
 from redis import Redis
 from redis.exceptions import RedisError
@@ -24,6 +25,10 @@ class OtpServiceUnavailable(RuntimeError):
 
 class VolunteerLookupUnavailable(RuntimeError):
     """Raised when the volunteer database cannot be queried during sign-in."""
+
+
+class StaffLookupUnavailable(RuntimeError):
+    """Raised when the staff database cannot be queried during sign-in."""
 
 
 def _is_production() -> bool:
@@ -146,6 +151,26 @@ def get_volunteer_by_phone(phone: str) -> Optional[dict]:
         raise VolunteerLookupUnavailable("Volunteer database is unavailable") from exc
 
 def get_staff_by_email(email: str, role: str) -> Optional[dict]:
-    db = get_supabase()
-    result = db.table("staff").select("*").eq("email", email).eq("role", role).execute()
-    return result.data[0] if result.data else None
+    if not settings.supabase_url or not settings.supabase_server_key:
+        raise StaffLookupUnavailable("Staff database is not configured")
+
+    url = f"{settings.supabase_url.rstrip('/')}/rest/v1/staff"
+    headers = {
+        "apikey": settings.supabase_server_key,
+        "Authorization": f"Bearer {settings.supabase_server_key}",
+    }
+    params = {
+        "select": "*",
+        "email": f"eq.{email}",
+        "role": f"eq.{role}",
+        "limit": "1",
+    }
+
+    try:
+        response = httpx.get(url, headers=headers, params=params, timeout=8)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise StaffLookupUnavailable("Staff database is unavailable") from exc
+
+    data = response.json()
+    return data[0] if data else None

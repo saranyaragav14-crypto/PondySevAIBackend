@@ -52,13 +52,13 @@ def verify_otp(body: OTPVerify):
 @router.post("/staff/login", response_model=TokenOut)
 def staff_login(body: NodalOfficerLogin):
     """Nodal officer email/password login."""
-    from app.database import get_supabase
-    db = get_supabase()
     email = body.email.strip().lower()
-    result = db.table("staff").select("*").eq("email", email).eq("role", "nodal_officer").execute()
-    if not result.data:
+    try:
+        staff = auth_service.get_staff_by_email(email, "nodal_officer")
+    except auth_service.StaffLookupUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if not staff:
         raise HTTPException(401, "Invalid credentials")
-    staff = result.data[0]
     if not bcrypt.checkpw(body.password.encode(), staff["password_hash"].encode()):
         raise HTTPException(401, "Invalid credentials")
     token = auth_service.create_access_token({"sub": staff["id"], "role": "nodal_officer", "name": staff["name"]})
@@ -67,13 +67,13 @@ def staff_login(body: NodalOfficerLogin):
 @router.post("/admin/login", response_model=TokenOut)
 def admin_login(body: AdminLogin):
     """Admin email/password login."""
-    from app.database import get_supabase
-    db = get_supabase()
     email = body.email.strip().lower()
-    result = db.table("staff").select("*").eq("email", email).eq("role", "admin").execute()
-    if not result.data:
+    try:
+        staff = auth_service.get_staff_by_email(email, "admin")
+    except auth_service.StaffLookupUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if not staff:
         raise HTTPException(401, "Invalid credentials")
-    staff = result.data[0]
     if not bcrypt.checkpw(body.password.encode(), staff["password_hash"].encode()):
         raise HTTPException(401, "Invalid credentials")
     token = auth_service.create_access_token({"sub": staff["id"], "role": "admin", "name": staff["name"]})
