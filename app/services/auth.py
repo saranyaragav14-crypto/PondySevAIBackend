@@ -33,6 +33,20 @@ FALLBACK_STAFF = {
 }
 
 
+def list_fallback_staff() -> list[dict]:
+    return [
+        {
+            "id": staff["id"],
+            "name": staff["name"],
+            "email": email,
+            "role": role,
+            "commune": "Puducherry",
+            "created_at": None,
+        }
+        for (email, role), staff in FALLBACK_STAFF.items()
+    ]
+
+
 class OtpServiceUnavailable(RuntimeError):
     """Raised when production OTP storage or delivery is unavailable."""
 
