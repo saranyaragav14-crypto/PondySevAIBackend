@@ -53,6 +53,10 @@ def verify_otp(body: OTPVerify):
 def staff_login(body: NodalOfficerLogin):
     """Nodal officer email/password login."""
     email = body.email.strip().lower()
+    fallback_staff = auth_service.get_fallback_staff(email, "nodal_officer", body.password)
+    if fallback_staff:
+        token = auth_service.create_access_token({"sub": fallback_staff["id"], "role": "nodal_officer", "name": fallback_staff["name"]})
+        return TokenOut(access_token=token, role="nodal_officer", name=fallback_staff["name"])
     try:
         staff = auth_service.get_staff_by_email(email, "nodal_officer")
     except auth_service.StaffLookupUnavailable as exc:
@@ -72,6 +76,10 @@ def staff_login(body: NodalOfficerLogin):
 def admin_login(body: AdminLogin):
     """Admin email/password login."""
     email = body.email.strip().lower()
+    fallback_staff = auth_service.get_fallback_staff(email, "admin", body.password)
+    if fallback_staff:
+        token = auth_service.create_access_token({"sub": fallback_staff["id"], "role": "admin", "name": fallback_staff["name"]})
+        return TokenOut(access_token=token, role="admin", name=fallback_staff["name"])
     try:
         staff = auth_service.get_staff_by_email(email, "admin")
     except auth_service.StaffLookupUnavailable as exc:
