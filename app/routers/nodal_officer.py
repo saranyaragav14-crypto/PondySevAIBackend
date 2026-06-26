@@ -44,13 +44,6 @@ def get_applicants(
     user: dict = Depends(require_role("nodal_officer", "admin")),
 ):
     """Get all applicants with AI scores, filtered by status/commune/dept."""
-    if str(user.get("sub", "")).startswith("fallback-"):
-        applicants = DEMO_APPLICANTS
-        if status:
-            applicants = [a for a in applicants if a["status"] == status or (status == "pending_review" and a["status"] == "registered")]
-        if commune:
-            applicants = [a for a in applicants if a["commune"] == commune]
-        return {"applicants": applicants}
     try:
         db = get_supabase()
         query = db.table("volunteers").select(
@@ -182,14 +175,11 @@ def export_csv(
 @router.get("/stats")
 def get_stats(user: dict = Depends(require_role("nodal_officer", "admin"))):
     """Dashboard stats for the nodal officer."""
-    if str(user.get("sub", "")).startswith("fallback-"):
+    try:
+        db = get_supabase()
+        all_v = db.table("volunteers").select("status,commune,tier").execute().data
+    except Exception:
         all_v = DEMO_APPLICANTS
-    else:
-        try:
-            db = get_supabase()
-            all_v = db.table("volunteers").select("status,commune,tier").execute().data
-        except Exception:
-            all_v = DEMO_APPLICANTS
     stats = {
         "total": len(all_v),
         "by_status": {},
