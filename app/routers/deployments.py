@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from app.schemas.role import DeploymentCreate, CheckInOut, FeedbackCreate, QRAttendance
 from app.database import get_supabase
 from app.routers.auth import get_current_user, require_role
+from app.services import fallback_data
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
 
@@ -38,14 +39,20 @@ def create_deployment(
 @router.get("/my")
 def my_deployments(user: dict = Depends(get_current_user)):
     """Get all deployments for the logged-in volunteer."""
-    db = get_supabase()
-    result = db.table("deployments").select("*, roles(name, dept_name)").eq(
-        "volunteer_id", user["sub"]
-    ).order("scheduled_date", desc=True).execute()
-    deployments = result.data
+    try:
+        db = get_supabase()
+        result = db.table("deployments").select("*, roles(name, dept_name)").eq(
+            "volunteer_id", user["sub"]
+        ).order("scheduled_date", desc=True).execute()
+        deployments = result.data or fallback_data.list_deployments(user["sub"])
+    except Exception:
+        deployments = fallback_data.list_deployments(user["sub"])
 
-    for deployment in deployments:
-        _add_supervisor(db, deployment)
+    try:
+        for deployment in deployments:
+            _add_supervisor(db, deployment)
+    except Exception:
+        pass
 
     return {"deployments": deployments}
 

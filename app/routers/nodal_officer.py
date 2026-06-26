@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
+from datetime import date, timedelta
 from app.database import get_supabase
 from app.routers.auth import require_role
 from app.services.notifications import bulk_sms
@@ -36,6 +37,25 @@ class AssignRequest(BaseModel):
     scheduled_date: Optional[str] = None
     shift: Optional[str] = None
     role_id: Optional[str] = None
+
+def _fallback_deployment(
+    volunteer_id: str,
+    body: AssignRequest,
+    user: dict,
+    deployment_id: str | None = None,
+) -> dict:
+    return fallback_data.add_deployment({
+        "id": deployment_id or str(uuid.uuid4()),
+        "volunteer_id": volunteer_id,
+        "role_id": body.role_id or "fallback-role",
+        "location": body.location or "Puducherry",
+        "scheduled_date": body.scheduled_date or (date.today() + timedelta(days=1)).isoformat(),
+        "shift": body.shift or "To be announced",
+        "status": "scheduled",
+        "assigned_by": user["sub"],
+        "roles": {"name": body.role, "dept_name": body.dept},
+        "supervisor": None,
+    })
 
 @router.get("/applicants")
 def get_applicants(
@@ -106,7 +126,9 @@ def assign_volunteer(
             if dep_result.data:
                 deployment_id = dep_result.data[0]["id"]
         except Exception:
-            deployment_id = str(uuid.uuid4())
+            deployment_id = _fallback_deployment(volunteer_id, body, user)["id"]
+    else:
+        deployment_id = _fallback_deployment(volunteer_id, body, user)["id"]
 
     background_tasks.add_task(
         bulk_sms, [v["phone"]], "application_assigned", "en",
